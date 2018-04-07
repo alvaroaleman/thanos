@@ -157,7 +157,6 @@ func (c *Syncer) syncMetas(ctx context.Context) error {
 		}
 
 		remote[id] = struct{}{}
-
 		// Check if we already have this block cached locally.
 		if _, ok := c.blocks[id]; ok {
 			return nil
@@ -191,6 +190,15 @@ func (c *Syncer) syncMetas(ctx context.Context) error {
 		if _, ok := remote[id]; !ok {
 			delete(c.blocks, id)
 		}
+	}
+
+	// After sync check for overlapped blocks.
+	var metas []tsdb.BlockMeta
+	for _, m := range c.blocks {
+		metas = append(metas, m.BlockMeta)
+	}
+	if overlaps := tsdb.OverlappingBlocks(metas); len(overlaps) > 0 {
+		return halt(errors.Errorf("overlaps found while gathering blocks. %s", overlaps))
 	}
 	return nil
 }
@@ -468,9 +476,11 @@ func (e HaltError) Error() string {
 
 // IsHaltError returns true if the base error is a HaltError.
 func IsHaltError(err error) bool {
-	_, ok1 := errors.Cause(err).(HaltError)
-	_, ok2 := errors.Cause(err).(*HaltError)
-	return ok1 || ok2
+	_, ok1 := err.(HaltError)
+	_, ok2 := err.(*HaltError)
+	_, ok3 := errors.Cause(err).(HaltError)
+	_, ok4 := errors.Cause(err).(*HaltError)
+	return ok1 || ok2 || ok3 || ok4
 }
 
 func (cg *Group) compact(ctx context.Context, dir string, comp tsdb.Compactor) (compID ulid.ULID, err error) {

@@ -468,11 +468,25 @@ func (e HaltError) Error() string {
 
 // IsHaltError returns true if the base error is a HaltError.
 func IsHaltError(err error) bool {
-	_, ok1 := err.(HaltError)
-	_, ok2 := err.(*HaltError)
-	_, ok3 := errors.Cause(err).(HaltError)
-	_, ok4 := errors.Cause(err).(*HaltError)
-	return ok1 || ok2 || ok3 || ok4
+	_, ok1 := errors.Cause(err).(HaltError)
+	_, ok2 := errors.Cause(err).(*HaltError)
+	return ok1 || ok2
+}
+
+func (cg *Group) areBlocksOverlapping(extra ...block.Meta) error {
+	var metas []tsdb.BlockMeta
+	for _, m := range cg.blocks {
+		metas = append(metas, m.BlockMeta)
+	}
+
+	for _, m := range extra {
+		metas = append(metas, m.BlockMeta)
+	}
+
+	if overlaps := tsdb.OverlappingBlocks(metas); len(overlaps) > 0 {
+		return errors.Errorf("overlaps found while gathering blocks. %s", overlaps)
+	}
+	return nil
 }
 
 func (cg *Group) compact(ctx context.Context, dir string, comp tsdb.Compactor) (compID ulid.ULID, err error) {
@@ -480,12 +494,8 @@ func (cg *Group) compact(ctx context.Context, dir string, comp tsdb.Compactor) (
 	defer cg.mtx.Unlock()
 
 	// Check for overlapped blocks.
-	var metas []tsdb.BlockMeta
-	for _, m := range cg.blocks {
-		metas = append(metas, m.BlockMeta)
-	}
-	if overlaps := tsdb.OverlappingBlocks(metas); len(overlaps) > 0 {
-		return compID, halt(errors.Errorf("overlaps found while gathering blocks. %s", overlaps))
+	if err := cg.areBlocksOverlapping(); err != nil {
+		return compID, errors.Wrap(halt(err), "pre compaction overlap check")
 	}
 
 	// Planning a compaction works purely based on the meta.json files in our future group's dir.
@@ -575,6 +585,11 @@ func (cg *Group) compact(ctx context.Context, dir string, comp tsdb.Compactor) (
 	// Ensure the output block is valid.
 	if err := block.VerifyIndex(filepath.Join(bdir, "index")); err != nil {
 		return compID, errors.Wrapf(halt(err), "invalid result block %s", bdir)
+	}
+
+	// Ensure the output block is not overlapping with anything else.
+	if err := cg.areBlocksOverlapping(); err != nil {
+		return compID, errors.Wrapf(halt(err), "resulted compacted block %s overlaps with something", bdir)
 	}
 
 	begin = time.Now()

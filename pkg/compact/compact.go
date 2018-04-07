@@ -192,14 +192,6 @@ func (c *Syncer) syncMetas(ctx context.Context) error {
 		}
 	}
 
-	// After sync check for overlapped blocks.
-	var metas []tsdb.BlockMeta
-	for _, m := range c.blocks {
-		metas = append(metas, m.BlockMeta)
-	}
-	if overlaps := tsdb.OverlappingBlocks(metas); len(overlaps) > 0 {
-		return halt(errors.Errorf("overlaps found while gathering blocks. %s", overlaps))
-	}
 	return nil
 }
 
@@ -486,6 +478,15 @@ func IsHaltError(err error) bool {
 func (cg *Group) compact(ctx context.Context, dir string, comp tsdb.Compactor) (compID ulid.ULID, err error) {
 	cg.mtx.Lock()
 	defer cg.mtx.Unlock()
+
+	// Check for overlapped blocks.
+	var metas []tsdb.BlockMeta
+	for _, m := range cg.blocks {
+		metas = append(metas, m.BlockMeta)
+	}
+	if overlaps := tsdb.OverlappingBlocks(metas); len(overlaps) > 0 {
+		return compID, halt(errors.Errorf("overlaps found while gathering blocks. %s", overlaps))
+	}
 
 	// Planning a compaction works purely based on the meta.json files in our future group's dir.
 	// So we first dump all our memory block metas into the directory.
